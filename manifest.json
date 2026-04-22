@@ -1,0 +1,9 @@
+{
+  "name": "Slides Exporter",
+  "id": "figma-slides-exporter-local",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "permissions": []
+}

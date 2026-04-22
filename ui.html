@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Slides Exporter</title>
+
+<!-- pptxgenjs from CDN — runs entirely in-browser, no server needed -->
+<script src="https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+
+<style>
+  /* ── Reset & Tokens ─────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0e0e10;
+    --surface:   #18181c;
+    --surface2:  #222228;
+    --border:    #2e2e38;
+    --accent:    #6c6cff;
+    --accent2:   #a78bfa;
+    --success:   #34d399;
+    --warn:      #fbbf24;
+    --danger:    #f87171;
+    --text:      #e8e8f0;
+    --muted:     #7070a0;
+    --mono:      "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    --sans:      "DM Sans", "Inter", system-ui, sans-serif;
+    --radius:    8px;
+    --radius-sm: 5px;
+  }
+
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* ── Header ─────────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .header-text h1 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text);
+  }
+
+  .header-text p {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* ── Section Labels ─────────────────────────── */
+  .label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  /* ── Options Card ───────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* ── Toggle Row ─────────────────────────────── */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .toggle-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .toggle-label span {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .toggle-label small {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .toggle {
+    width: 36px; height: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.2s, border-color 0.2s;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+
+  .toggle.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .toggle::after {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    background: white;
+    border-radius: 50%;
+    top: 2px; left: 2px;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+
+  .toggle.on::after { transform: translateX(16px); }
+
+  /* ── Scale Selector ─────────────────────────── */
+  .scale-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .scale-row .toggle-label span { font-size: 12.5px; font-weight: 500; }
+
+  .seg {
+    display: flex;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .seg button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    border-right: 1px solid var(--border);
+  }
+
+  .seg button:last-child { border-right: none; }
+
+  .seg button.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .seg button:hover:not(.active) {
+    background: var(--border);
+    color: var(--text);
+  }
+
+  /* ── Format Selector ─────────────────────────── */
+  .format-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .fmt-btn {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .fmt-btn .icon { font-size: 16px; }
+
+  .fmt-btn.active {
+    background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
+    border-color: var(--accent);
+    color: var(--accent2);
+  }
+
+  .fmt-btn:hover:not(.active) {
+    border-color: var(--muted);
+    color: var(--text);
+  }
+
+  /* ── Export Button ──────────────────────────── */
+  #exportBtn {
+    width: 100%;
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius);
+    color: #fff;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 11px 16px;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+    letter-spacing: 0.01em;
+  }
+
+  #exportBtn:hover:not(:disabled) { opacity: 0.88; }
+  #exportBtn:active:not(:disabled) { transform: scale(0.98); }
+
+  #exportBtn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ── Progress Area ──────────────────────────── */
+  #progressArea {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #progressArea.visible { display: flex; }
+
+  .progress-bar-track {
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  #statusMsg {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    min-height: 16px;
+  }
+
+  /* ── Log ────────────────────────────────────── */
+  #log {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    max-height: 100px;
+    overflow-y: auto;
+    gap: 2px;
+    flex-direction: column;
+  }
+
+  #log.visible { display: flex; }
+
+  .log-line { line-height: 1.6; }
+  .log-line.success { color: var(--success); }
+  .log-line.warn    { color: var(--warn); }
+  .log-line.error   { color: var(--danger); }
+
+  /* ── Success Banner ─────────────────────────── */
+  #successBanner {
+    display: none;
+    background: color-mix(in srgb, var(--success) 12%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  #successBanner.visible { display: flex; }
+  #successBanner .icon { font-size: 16px; flex-shrink: 0; }
+  #successBanner .text { font-size: 12px; color: var(--success); line-height: 1.5; }
+  #successBanner .text strong { font-weight: 600; display: block; margin-bottom: 2px; }
+
+  /* ── Error Banner ────────────────────────────── */
+  #errorBanner {
+    display: none;
+    background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  #errorBanner.visible { display: flex; }
+  #errorBanner .icon { font-size: 16px; flex-shrink: 0; }
+  #errorBanner .text { font-size: 12px; color: var(--danger); line-height: 1.5; }
+
+  /* ── Footer ─────────────────────────────────── */
+  .footer {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .footer a {
+    font-size: 11px;
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+
+  .footer a:hover { color: var(--text); }
+
+  #resetBtn {
+    display: none;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  #resetBtn:hover { border-color: var(--muted); color: var(--text); }
+  #resetBtn.visible { display: block; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">▤</div>
+  <div class="header-text">
+    <h1>Slides Exporter</h1>
+    <p>Figma frames → PPTX / Google Slides JSON</p>
+  </div>
+</div>
+
+<!-- Options -->
+<div id="optionsArea">
+
+  <div class="label">Export Format</div>
+  <div class="card">
+    <div class="format-row">
+      <button class="fmt-btn active" data-format="pptx" onclick="setFormat('pptx')">
+        <span class="icon">📊</span>
+        PowerPoint
+        <small>.pptx</small>
+      </button>
+      <button class="fmt-btn" data-format="gslides" onclick="setFormat('gslides')">
+        <span class="icon">📑</span>
+        Slides JSON
+        <small>for API</small>
+      </button>
+    </div>
+  </div>
+
+  <div class="label" style="margin-top:12px">Options</div>
+  <div class="card">
+
+    <div class="toggle-row" onclick="toggleOpt('textOverlay')">
+      <div class="toggle-label">
+        <span>Selectable text overlay</span>
+        <small>Lay editable text on top of rasterised background</small>
+      </div>
+      <div class="toggle on" id="toggle-textOverlay"></div>
+    </div>
+
+    <div style="height:1px; background: var(--border)"></div>
+
+    <div class="scale-row">
+      <div class="toggle-label">
+        <span>Raster scale</span>
+        <small>Higher = sharper, larger file</small>
+      </div>
+      <div class="seg" id="scaleGroup">
+        <button onclick="setScale(1)">1×</button>
+        <button onclick="setScale(2)" class="active">2×</button>
+        <button onclick="setScale(3)">3×</button>
+      </div>
+    </div>
+
+  </div>
+
+  <button id="exportBtn" onclick="startExport()">Export Slides</button>
+</div>
+
+<!-- Progress -->
+<div id="progressArea">
+  <div class="progress-bar-track">
+    <div class="progress-bar-fill" id="progressFill"></div>
+  </div>
+  <div id="statusMsg">Initialising…</div>
+</div>
+
+<!-- Log -->
+<div id="log"></div>
+
+<!-- Success -->
+<div id="successBanner">
+  <span class="icon">✓</span>
+  <div class="text">
+    <strong id="successTitle">Export complete</strong>
+    <span id="successDetail"></span>
+  </div>
+</div>
+
+<!-- Error -->
+<div id="errorBanner">
+  <span class="icon">✕</span>
+  <div class="text" id="errorText"></div>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <a href="#" onclick="parent.postMessage({pluginMessage:{type:'close'}},'*'); return false;">Close plugin</a>
+  <button id="resetBtn" onclick="resetUI()">Export another</button>
+</div>
+
+<script>
+// ── State ────────────────────────────────────
+const state = {
+  format: 'pptx',
+  textOverlay: true,
+  scale: 2,
+};
+
+// ── UI helpers ───────────────────────────────
+function setFormat(fmt) {
+  state.format = fmt;
+  document.querySelectorAll('.fmt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.format === fmt);
+  });
+}
+
+function toggleOpt(key) {
+  state[key] = !state[key];
+  document.getElementById(`toggle-${key}`).classList.toggle('on', state[key]);
+}
+
+function setScale(n) {
+  state.scale = n;
+  document.querySelectorAll('#scaleGroup button').forEach((b, i) => {
+    b.classList.toggle('active', i + 1 === n);
+  });
+}
+
+function logLine(msg, type = '') {
+  const log = document.getElementById('log');
+  log.classList.add('visible');
+  const div = document.createElement('div');
+  div.className = `log-line ${type}`;
+  div.textContent = `› ${msg}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setProgress(pct, msg) {
+  document.getElementById('progressFill').style.width = `${pct}%`;
+  document.getElementById('statusMsg').textContent = msg;
+}
+
+function showError(msg) {
+  document.getElementById('errorText').textContent = msg;
+  document.getElementById('errorBanner').classList.add('visible');
+  document.getElementById('progressArea').classList.remove('visible');
+  document.getElementById('exportBtn').disabled = false;
+  document.getElementById('resetBtn').classList.add('visible');
+}
+
+function showSuccess(title, detail) {
+  document.getElementById('successTitle').textContent = title;
+  document.getElementById('successDetail').textContent = detail;
+  document.getElementById('successBanner').classList.add('visible');
+  document.getElementById('progressArea').classList.remove('visible');
+  document.getElementById('resetBtn').classList.add('visible');
+}
+
+function resetUI() {
+  document.getElementById('successBanner').classList.remove('visible');
+  document.getElementById('errorBanner').classList.remove('visible');
+  document.getElementById('log').classList.remove('visible');
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('progressArea').classList.remove('visible');
+  document.getElementById('resetBtn').classList.remove('visible');
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('exportBtn').disabled = false;
+}
+
+// ── Start Export ──────────────────────────────
+function startExport() {
+  resetUI();
+  document.getElementById('exportBtn').disabled = true;
+  document.getElementById('progressArea').classList.add('visible');
+  setProgress(5, 'Scanning frames…');
+  logLine('Requesting frame data from Figma…');
+
+  parent.postMessage({
+    pluginMessage: {
+      type: 'start-export',
+      includeTextOverlay: state.textOverlay,
+      exportScale: state.scale,
+    }
+  }, '*');
+}
+
+// ── Message from plugin sandbox ───────────────
+window.onmessage = async (event) => {
+  const msg = event.data.pluginMessage;
+  if (!msg) return;
+
+  switch (msg.type) {
+
+    case 'progress': {
+      const pct = msg.stage === 'start' ? 10
+        : 10 + (msg.current / msg.total) * 70;
+      setProgress(pct, msg.message);
+      logLine(msg.message);
+      break;
+    }
+
+    case 'slides-ready': {
+      logLine(`All frames received. Building ${state.format.toUpperCase()}…`, 'success');
+      setProgress(85, 'Assembling presentation…');
+      try {
+        if (state.format === 'pptx') {
+          await buildPPTX(msg.slides, msg.pageName);
+        } else {
+          buildSlidesJSON(msg.slides, msg.pageName);
+        }
+      } catch (e) {
+        showError(`Build failed: ${e.message}`);
+        logLine(e.message, 'error');
+      }
+      break;
+    }
+
+    case 'error': {
+      showError(msg.message);
+      logLine(msg.message, 'error');
+      break;
+    }
+  }
+};
+
+// ── PPTX Builder ──────────────────────────────
+
+/**
+ * Converts pixels (at Figma's 1:1 px/pt) to PPTX inches.
+ * PPTX uses EMU internally; pptxgenjs accepts inches.
+ * We base our inch calculation on the slide's own pixel dimensions
+ * so that 0 → 0" and frameWidth → slideWidth".
+ */
+function pxToInch(px, frameSize, slideInch) {
+  return (px / frameSize) * slideInch;
+}
+
+async function buildPPTX(slides, pageName) {
+  const pptx = new PptxGenJS();
+
+  // Determine presentation dimensions from the first frame
+  const firstSlide = slides[0];
+  const aspectRatio = firstSlide.width / firstSlide.height;
+
+  // Standard PPTX widths; pick closest to frame ratio
+  const SLIDE_W = 10; // inches
+  const SLIDE_H = parseFloat((SLIDE_W / aspectRatio).toFixed(4));
+
+  pptx.defineLayout({ name: 'CUSTOM', width: SLIDE_W, height: SLIDE_H });
+  pptx.layout = 'CUSTOM';
+  pptx.subject = pageName;
+  pptx.title = pageName;
+
+  for (const slide of slides) {
+    const s = pptx.addSlide();
+
+    // ── Background image (full raster of the Figma frame)
+    if (slide.imageBytes) {
+      const b64 = uint8ToBase64(new Uint8Array(slide.imageBytes));
+      s.addImage({
+        data: `image/png;base64,${b64}`,
+        x: 0, y: 0,
+        w: SLIDE_W, h: SLIDE_H,
+        sizing: { type: 'contain', w: SLIDE_W, h: SLIDE_H },
+      });
+    } else {
+      // Fallback: solid background colour
+      s.background = { color: slide.bgColor };
+    }
+
+    // ── Individual images (bitmaps and icons exported separately)
+    if (slide.individualImages && slide.individualImages.length > 0) {
+      for (const img of slide.individualImages) {
+        const b64 = uint8ToBase64(new Uint8Array(img.imageBytes));
+        s.addImage({
+          data: `image/png;base64,${b64}`,
+          x: pxToInch(img.x, slide.width, SLIDE_W),
+          y: pxToInch(img.y, slide.height, SLIDE_H),
+          w: pxToInch(img.w, slide.width, SLIDE_W),
+          h: pxToInch(img.h, slide.height, SLIDE_H),
+        });
+      }
+    }
+
+    // ── Text overlays (transparent bg so raster shows through)
+    if (slide.textNodes && slide.textNodes.length > 0) {
+      for (const t of slide.textNodes) {
+        if (!t.text || t.text.trim() === '') continue;
+
+        const x = pxToInch(t.x, slide.width, SLIDE_W);
+        const y = pxToInch(t.y, slide.height, SLIDE_H);
+        const w = pxToInch(t.w, slide.width, SLIDE_W);
+        const h = pxToInch(t.h, slide.height, SLIDE_H);
+
+        // Font size scaled to slide (Figma px ≈ pt at default 72dpi)
+        const scaledFontSize = Math.round(
+          (t.fontSize / slide.height) * SLIDE_H * 72
+        );
+
+        s.addText(t.text, {
+          x, y, w, h,
+          fontSize: Math.max(6, scaledFontSize),
+          color: t.color,
+          bold: t.bold,
+          italic: t.italic,
+          align: t.align,
+          transparency: 100,   // fully transparent box background
+          fontFace: 'Arial',   // safe default; Figma fonts may not embed
+          charSpacing: t.charSpacingPt,
+          lineSpacingMultiple: t.lineHeightPx
+            ? t.lineHeightPx / (t.fontSize || 16)
+            : 1.2,
+          wrap: true,
+          valign: 'top',
+        });
+      }
+    }
+
+    logLine(`Slide "${slide.name}" added`);
+  }
+
+  setProgress(97, 'Downloading file…');
+
+  const filename = `${pageName.replace(/[^a-z0-9\-_ ]/gi, '_')}.pptx`;
+  await pptx.writeFile({ fileName: filename });
+
+  setProgress(100, 'Done');
+  logLine(`Saved as ${filename}`, 'success');
+  showSuccess(
+    `${slides.length} slide${slides.length !== 1 ? 's' : ''} exported`,
+    `"${filename}" downloaded to your computer`
+  );
+}
+
+// ── Google Slides JSON Builder ────────────────
+/**
+ * Produces a JSON payload compatible with the Google Slides API
+ * batchUpdate endpoint. Import this into your own script to push
+ * to a real Slides deck via OAuth.
+ *
+ * Docs: https://developers.google.com/slides/api/reference/rest/v1/presentations/batchUpdate
+ */
+function buildSlidesJSON(slides, pageName) {
+  const requests = [];
+
+  // Each slide: createSlide + addImage + addTextBox per text node
+  slides.forEach((slide, idx) => {
+    const slideId = `slide_${idx}`;
+
+    // 1. Create slide
+    requests.push({
+      createSlide: {
+        objectId: slideId,
+        insertionIndex: idx,
+        slideLayoutReference: { predefinedLayout: 'BLANK' },
+      },
+    });
+
+    // 2. Page background colour
+    requests.push({
+      updatePageProperties: {
+        objectId: slideId,
+        pageProperties: {
+          pageBackgroundFill: {
+            solidFill: { color: { rgbColor: hexToRgbNorm(slide.bgColor) } },
+          },
+        },
+        fields: 'pageBackgroundFill',
+      },
+    });
+
+    // 3. Background image element (requires uploading image to a public URL first)
+    //    We include the placeholder here; swap imageUrl at runtime.
+    if (slide.imageBytes) {
+      const imgId = `img_${idx}`;
+      const b64   = uint8ToBase64(new Uint8Array(slide.imageBytes));
+      requests.push({
+        _comment: `Upload base64 PNG to Cloud Storage or Imgur, then replace imageUrl below`,
+        createImage: {
+          objectId: imgId,
+          url: `__REPLACE_WITH_UPLOADED_URL_FOR_SLIDE_${idx}__`,
+          elementProperties: {
+            pageObjectId: slideId,
+            size: {
+              width:  { magnitude: slide.width  * 9144, unit: 'EMU' },
+              height: { magnitude: slide.height * 9144, unit: 'EMU' },
+            },
+            transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' },
+          },
+        },
+      });
+    }
+
+    // 3a. Individual images (bitmaps / icons exported separately)
+    if (slide.individualImages && slide.individualImages.length > 0) {
+      slide.individualImages.forEach((img, ii) => {
+        const EMU = 9144;
+        const indivId = `indiv_${idx}_${ii}`;
+        requests.push({
+          _comment: `Upload base64 PNG, then replace imageUrl below`,
+          createImage: {
+            objectId: indivId,
+            url: `__REPLACE_WITH_UPLOADED_URL_FOR_SLIDE_${idx}_IMAGE_${ii}__`,
+            elementProperties: {
+              pageObjectId: slideId,
+              size: {
+                width:  { magnitude: img.w * EMU, unit: 'EMU' },
+                height: { magnitude: img.h * EMU, unit: 'EMU' },
+              },
+              transform: {
+                scaleX: 1, scaleY: 1,
+                translateX: img.x * EMU,
+                translateY: img.y * EMU,
+                unit: 'EMU',
+              },
+            },
+          },
+        });
+      });
+    }
+
+    // 4. Text boxes
+    if (slide.textNodes) {
+      slide.textNodes.forEach((t, ti) => {
+        if (!t.text || t.text.trim() === '') return;
+
+        const boxId = `txt_${idx}_${ti}`;
+        // Google Slides uses EMU. 1px ≈ 9144 EMU at 96dpi.
+        const EMU = 9144;
+
+        requests.push({
+          createShape: {
+            objectId: boxId,
+            shapeType: 'TEXT_BOX',
+            elementProperties: {
+              pageObjectId: slideId,
+              size: {
+                width:  { magnitude: t.w * EMU, unit: 'EMU' },
+                height: { magnitude: t.h * EMU, unit: 'EMU' },
+              },
+              transform: {
+                scaleX: 1, scaleY: 1,
+                translateX: t.x * EMU,
+                translateY: t.y * EMU,
+                unit: 'EMU',
+              },
+            },
+          },
+        });
+
+        // Insert text
+        requests.push({
+          insertText: { objectId: boxId, text: t.text },
+        });
+
+        // Style text
+        requests.push({
+          updateTextStyle: {
+            objectId: boxId,
+            textRange: { type: 'ALL' },
+            style: {
+              fontSize:   { magnitude: t.fontSize, unit: 'PT' },
+              foregroundColor: {
+                opaqueColor: { rgbColor: hexToRgbNorm(t.color) },
+              },
+              bold:   t.bold,
+              italic: t.italic,
+            },
+            fields: 'fontSize,foregroundColor,bold,italic',
+          },
+        });
+
+        // Paragraph alignment
+        requests.push({
+          updateParagraphStyle: {
+            objectId: boxId,
+            textRange: { type: 'ALL' },
+            style: {
+              alignment: t.align === 'center' ? 'CENTER'
+                       : t.align === 'right'  ? 'END'
+                       : 'START',
+            },
+            fields: 'alignment',
+          },
+        });
+      });
+    }
+  });
+
+  const payload = JSON.stringify({ requests }, null, 2);
+  downloadText(payload, `${pageName.replace(/[^a-z0-9\-_ ]/gi, '_')}_slides_api.json`);
+
+  setProgress(100, 'Done');
+  logLine(`JSON saved (${requests.length} API requests)`, 'success');
+  showSuccess(
+    `${slides.length} slide${slides.length !== 1 ? 's' : ''} → JSON`,
+    `Feed this to the Google Slides batchUpdate API with OAuth`
+  );
+}
+
+// ── Utilities ─────────────────────────────────
+
+/** Uint8Array → base64 string without breaking on large arrays */
+function uint8ToBase64(bytes) {
+  let binary = '';
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/** #RRGGBB → { red, green, blue } in 0–1 range */
+function hexToRgbNorm(hex) {
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+  return { red: r, green: g, blue: b };
+}
+
+/** Trigger a text file download */
+function downloadText(content, filename) {
+  const blob = new Blob([content], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+</script>
+
+</body>
+</html>
