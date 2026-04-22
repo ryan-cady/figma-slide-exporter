@@ -40,11 +40,10 @@ function extractTextNodes(node, rootFrame, results = []) {
     const fontWeight = safeGet(node.fontWeight, 400);
     const bold = fontWeight >= 600;
 
-    const fontStyle = safeGet(
-      node.fontName !== figma.mixed ? node.fontName.style : "",
-      ""
-    );
+    const fontName = node.fontName !== figma.mixed ? node.fontName : null;
+    const fontStyle = safeGet(fontName ? fontName.style : "", "");
     const italic = fontStyle.toLowerCase().includes("italic");
+    const fontFamily = fontName ? fontName.family : "";
 
     let color = "000000";
     const fills = safeGet(node.fills, []);
@@ -73,7 +72,7 @@ function extractTextNodes(node, rootFrame, results = []) {
     results.push({
       text: node.characters,
       x, y, w, h,
-      fontSize, bold, italic, color, align, lineHeightPx,
+      fontSize, bold, italic, fontFamily, color, align, lineHeightPx,
       charSpacingPt: Math.max(0, charSpacingPt),
       opacity: node.opacity !== undefined ? node.opacity : 1,
     });

@@ -683,7 +683,7 @@ async function buildPPTX(slides, pageName) {
           italic: t.italic,
           align: t.align,
           transparency: 100,   // fully transparent box background
-          fontFace: 'Arial',   // safe default; Figma fonts may not embed
+          fontFace: t.fontFamily || 'Arial',
           charSpacing: t.charSpacingPt,
           lineSpacingMultiple: t.lineHeightPx
             ? t.lineHeightPx / (t.fontSize || 16)
@@ -843,8 +843,11 @@ function buildSlidesJSON(slides, pageName) {
               },
               bold:   t.bold,
               italic: t.italic,
+              ...(t.fontFamily ? { weightedFontFamily: { fontFamily: t.fontFamily } } : {}),
             },
-            fields: 'fontSize,foregroundColor,bold,italic',
+            fields: t.fontFamily
+              ? 'fontSize,foregroundColor,bold,italic,weightedFontFamily'
+              : 'fontSize,foregroundColor,bold,italic',
           },
         });
 
