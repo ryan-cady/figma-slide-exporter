@@ -483,6 +483,8 @@ const state = {
   scale: 2,
 };
 
+let collectedSlides = [];
+
 // ── UI helpers ───────────────────────────────
 function setFormat(fmt) {
   state.format = fmt;
@@ -548,6 +550,7 @@ function resetUI() {
 // ── Start Export ──────────────────────────────
 function startExport() {
   resetUI();
+  collectedSlides = [];
   document.getElementById('exportBtn').disabled = true;
   document.getElementById('progressArea').classList.add('visible');
   setProgress(5, 'Scanning frames…');
@@ -577,18 +580,26 @@ window.onmessage = async (event) => {
       break;
     }
 
-    case 'slides-ready': {
+    case 'slide': {
+      collectedSlides[msg.slide.index] = msg.slide;
+      break;
+    }
+
+    case 'slides-done': {
       logLine(`All frames received. Building ${state.format.toUpperCase()}…`, 'success');
       setProgress(85, 'Assembling presentation…');
       try {
+        const slides = collectedSlides.filter(Boolean);
         if (state.format === 'pptx') {
-          await buildPPTX(msg.slides, msg.pageName);
+          await buildPPTX(slides, msg.pageName);
         } else {
-          buildSlidesJSON(msg.slides, msg.pageName);
+          buildSlidesJSON(slides, msg.pageName);
         }
       } catch (e) {
         showError(`Build failed: ${e.message}`);
         logLine(e.message, 'error');
+      } finally {
+        collectedSlides = [];
       }
       break;
     }

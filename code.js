@@ -157,7 +157,7 @@ async function exportIndividualNodes(nodeInfos, scale) {
         format: "PNG",
         constraint: { type: "SCALE", value: scale },
       });
-      results.push({ x, y, w, h, imageBytes: Array.from(bytes) });
+      results.push({ x, y, w, h, imageBytes: bytes });
     } catch (e) {
       console.warn(`Skipped node "${node.name}": ${e.message}`);
     }
@@ -182,7 +182,7 @@ async function exportFrameImage(frame, scale = 2, extraHideNodes = []) {
       format: "PNG",
       constraint: { type: "SCALE", value: scale },
     });
-    return Array.from(bytes);
+    return bytes;
   } catch (e) {
     if (scale > 1) {
       console.warn(`Frame "${frame.name}": ${scale}× export failed, retrying at 1×`);
@@ -217,8 +217,6 @@ async function runExport({ includeTextOverlay, exportScale }) {
     total: frames.length,
     message: `Found ${frames.length} frame${frames.length !== 1 ? "s" : ""} — starting export…`,
   });
-
-  const slides = [];
 
   for (let i = 0; i < frames.length; i++) {
     const frame = frames[i];
@@ -255,21 +253,24 @@ async function runExport({ includeTextOverlay, exportScale }) {
       if (solidBg) bgColor = rgbToHex(solidBg.color);
     }
 
-    slides.push({
-      index: i,
-      name: frame.name,
-      width: frame.width,
-      height: frame.height,
-      bgColor,
-      imageBytes,
-      textNodes,
-      individualImages,
+    figma.ui.postMessage({
+      type: "slide",
+      slide: {
+        index: i,
+        name: frame.name,
+        width: frame.width,
+        height: frame.height,
+        bgColor,
+        imageBytes,
+        textNodes,
+        individualImages,
+      },
     });
   }
 
   figma.ui.postMessage({
-    type: "slides-ready",
-    slides,
+    type: "slides-done",
+    total: frames.length,
     pageName: page.name,
   });
 }
