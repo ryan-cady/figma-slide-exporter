@@ -10,9 +10,10 @@ figma.showUI(__html__, { width: 420, height: 580, title: "Slides Exporter" });
 
 /** Convert a Figma RGBA color to a 6-char hex string */
 function rgbToHex(color) {
-  const r = Math.round((color.r || 0) * 255).toString(16).padStart(2, "0");
-  const g = Math.round((color.g || 0) * 255).toString(16).padStart(2, "0");
-  const b = Math.round((color.b || 0) * 255).toString(16).padStart(2, "0");
+  const toByte = (c) => Math.max(0, Math.min(255, Math.round((c || 0) * 255)));
+  const r = toByte(color.r).toString(16).padStart(2, "0");
+  const g = toByte(color.g).toString(16).padStart(2, "0");
+  const b = toByte(color.b).toString(16).padStart(2, "0");
   return `${r}${g}${b}`;
 }
 
@@ -37,23 +38,38 @@ function extractTextNodes(node, rootFrame, results = []) {
     const h = abs.height;
 
     const fontSize = safeGet(node.fontSize, 16);
-    const fontWeight = safeGet(node.fontWeight, 400);
-    const bold = fontWeight >= 600;
 
     const fontName = node.fontName !== figma.mixed ? node.fontName : null;
-    const fontStyle = safeGet(fontName ? fontName.style : "", "");
+    const fontStyle = safeGet(fontName ? fontName.style : "", "Regular");
     const italic = fontStyle.toLowerCase().includes("italic");
-    const fontFamily = fontName ? fontName.family : "";
+    const baseFamily = fontName ? fontName.family : "";
+
+    // PowerPoint has no numeric font-weight control, only a binary bold flag.
+    // Request the specifically-named weight variant (e.g. "Inter SemiBold")
+    // for anything other than Regular/Bold so weights like Medium/Light/Black
+    // aren't all flattened down to Regular.
+    const weightName = fontStyle.replace(/italic/i, "").trim() || "Regular";
+    const bold = weightName.toLowerCase() === "bold";
+    const fontFamily =
+      baseFamily && !["regular", "bold"].includes(weightName.toLowerCase())
+        ? `${baseFamily} ${weightName}`
+        : baseFamily;
 
     let color = "000000";
     const fills = safeGet(node.fills, []);
     if (Array.isArray(fills) && fills.length > 0) {
-      const solidFill = fills.find((f) => f.type === "SOLID" && f.visible !== false);
+      // fills[] is bottom-to-top; the last matching SOLID paint is the one actually rendered.
+      const solidFills = fills.filter((f) => f.type === "SOLID" && f.visible !== false);
+      const solidFill = solidFills[solidFills.length - 1];
       if (solidFill) color = rgbToHex(solidFill.color);
     }
 
     const rawAlign = safeGet(node.textAlignHorizontal, "LEFT");
     const align = rawAlign.toLowerCase();
+
+    // Figma: TOP | CENTER | BOTTOM  →  pptxgenjs: top | middle | bottom
+    const rawVAlign = safeGet(node.textAlignVertical, "TOP");
+    const valign = rawVAlign === "CENTER" ? "middle" : rawVAlign.toLowerCase();
 
     const lineHeight = safeGet(node.lineHeight, { unit: "AUTO" });
     const lineHeightPx =
@@ -64,16 +80,19 @@ function extractTextNodes(node, rootFrame, results = []) {
         : fontSize * 1.2;
 
     const letterSpacing = safeGet(node.letterSpacing, { unit: "PERCENT", value: 0 });
-    const charSpacingPt =
+    const letterSpacingPx =
       letterSpacing.unit === "PIXELS"
-        ? letterSpacing.value * 0.75
+        ? letterSpacing.value
         : (fontSize * letterSpacing.value) / 100;
+    // Figma px → pt, same 96→72dpi ratio used for font size. Negative values
+    // (tight/condensed tracking) are valid in Figma and OOXML — don't clamp.
+    const charSpacingPt = letterSpacingPx * 0.75;
 
     results.push({
       text: node.characters,
       x, y, w, h,
-      fontSize, bold, italic, fontFamily, color, align, lineHeightPx,
-      charSpacingPt: Math.max(0, charSpacingPt),
+      fontSize, bold, italic, fontFamily, color, align, valign, lineHeightPx,
+      charSpacingPt,
       opacity: node.opacity !== undefined ? node.opacity : 1,
     });
 
@@ -109,23 +128,73 @@ function nodeHasImageFill(node) {
   return Array.isArray(fills) && fills.some((f) => f.type === "IMAGE" && f.visible !== false);
 }
 
+/** Node types treated as standalone shapes/lines, exported individually rather than baked into the background */
+const SHAPE_NODE_TYPES = new Set([
+  "RECTANGLE",
+  "ELLIPSE",
+  "LINE",
+  "POLYGON",
+  "STAR",
+  "VECTOR",
+  "BOOLEAN_OPERATION",
+]);
+
 /**
- * Recursively collect nodes to export as individual images:
- * - Nodes with IMAGE fills (placed bitmaps)
- * - VECTOR / BOOLEAN_OPERATION nodes (icons / compound paths)
- * Stops recursing once a target node is found.
+ * exportAsync on an isolated node renders that node's own full geometry and
+ * ignores any cropping contributed by an ancestor frame's "Clip content" —
+ * so a shape that looks like a thin sliver in Figma (because a parent frame
+ * clips it down) would export as its full, much larger, unclipped bounds.
+ * Detect that case by checking whether the node's bounds actually fit inside
+ * every clipping ancestor up to (and including) the root frame being exported.
  */
-function collectIndividualNodes(node, rootFrame, results = []) {
+function isClippedByAncestor(node, rootFrame) {
+  const nodeAbs = node.absoluteRenderBounds || node.absoluteBoundingBox;
+  if (!nodeAbs) return false;
+  const EPS = 0.5;
+  let current = node.parent;
+  while (current) {
+    if (current.clipsContent) {
+      const pAbs = current.absoluteBoundingBox;
+      if (pAbs) {
+        const fitsX = nodeAbs.x >= pAbs.x - EPS && nodeAbs.x + nodeAbs.width <= pAbs.x + pAbs.width + EPS;
+        const fitsY = nodeAbs.y >= pAbs.y - EPS && nodeAbs.y + nodeAbs.height <= pAbs.y + pAbs.height + EPS;
+        if (!fitsX || !fitsY) return true;
+      }
+    }
+    if (current.id === rootFrame.id) break;
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
+ * Recursively collect nodes to export as individual images, each on its own
+ * transparent PNG rather than flattened into the artboard's background raster:
+ * - Nodes with IMAGE fills (placed bitmaps)
+ * - Shapes and lines (RECTANGLE, ELLIPSE, LINE, POLYGON, STAR, VECTOR, BOOLEAN_OPERATION)
+ * Stops recursing once a target node is found. Shapes that are visually clipped
+ * by an ancestor frame are left out (flagged via `clippedFound`) so they fall
+ * back to the background raster, which renders the clip correctly.
+ */
+function collectIndividualNodes(node, rootFrame, results = [], clippedFound = { any: false }) {
   if (node.visible === false) return results;
 
-  const isTarget = node !== rootFrame && (
+  const isShapeCandidate = node !== rootFrame && (
     nodeHasImageFill(node) ||
-    node.type === "VECTOR" ||
-    node.type === "BOOLEAN_OPERATION"
+    SHAPE_NODE_TYPES.has(node.type)
   );
 
-  if (isTarget) {
-    const abs = node.absoluteBoundingBox;
+  if (isShapeCandidate) {
+    if (isClippedByAncestor(node, rootFrame)) {
+      clippedFound.any = true;
+      return results;
+    }
+    // absoluteBoundingBox is geometry only — a LINE node's is 0 along its thin
+    // axis, since visible thickness comes entirely from the stroke. exportAsync
+    // rasterizes the actual visual footprint (stroke, effects, etc.), which is
+    // what absoluteRenderBounds reports, so use that for placement to keep the
+    // exported pixels aligned with the box we tell PowerPoint to put them in.
+    const abs = node.absoluteRenderBounds || node.absoluteBoundingBox;
     const rootAbs = rootFrame.absoluteBoundingBox;
     if (abs && rootAbs) {
       results.push({
@@ -141,7 +210,7 @@ function collectIndividualNodes(node, rootFrame, results = []) {
 
   if ("children" in node) {
     for (const child of node.children) {
-      collectIndividualNodes(child, rootFrame, results);
+      collectIndividualNodes(child, rootFrame, results, clippedFound);
     }
   }
 
@@ -226,13 +295,35 @@ async function runExport({ includeTextOverlay, exportScale }) {
       stage: "frame",
       current: i + 1,
       total: frames.length,
-      message: `Rasterising "${frame.name}" (${i + 1}/${frames.length})…`,
+      message: `Processing "${frame.name}" (${i + 1}/${frames.length})…`,
     });
 
-    const indivNodeInfos = collectIndividualNodes(frame, frame);
+    const clippedFound = { any: false };
+    const indivNodeInfos = collectIndividualNodes(frame, frame, [], clippedFound);
     const indivNodeRefs = indivNodeInfos.map((info) => info.node);
 
-    const imageBytes = await exportFrameImage(frame, exportScale, indivNodeRefs);
+    // Determine the artboard's own background: if the topmost visible fill is a
+    // flat SOLID paint, use that color directly as the PPTX slide background and
+    // skip rasterising the frame entirely — every shape/line/image is exported as
+    // its own transparent layer instead of being flattened together. If any shape
+    // was left out of that individual-export pass because an ancestor frame clips
+    // it (see isClippedByAncestor), we still need the raster pass to render it
+    // correctly, so the background can't be skipped in that case.
+    let bgColor = "FFFFFF";
+    let isSolidBg = true;
+    if (frame.fills && Array.isArray(frame.fills) && frame.fills.length > 0) {
+      const visibleFills = frame.fills.filter((f) => f.visible !== false);
+      const topFill = visibleFills[visibleFills.length - 1];
+      isSolidBg = !topFill || topFill.type === "SOLID";
+      const solidFills = visibleFills.filter((f) => f.type === "SOLID");
+      const solidBg = solidFills[solidFills.length - 1];
+      if (solidBg) bgColor = rgbToHex(solidBg.color);
+    }
+    if (clippedFound.any) isSolidBg = false;
+
+    const imageBytes = isSolidBg
+      ? null
+      : await exportFrameImage(frame, exportScale, indivNodeRefs);
 
     if (indivNodeInfos.length > 0) {
       figma.ui.postMessage({
@@ -240,18 +331,12 @@ async function runExport({ includeTextOverlay, exportScale }) {
         stage: "frame",
         current: i + 1,
         total: frames.length,
-        message: `Exporting ${indivNodeInfos.length} image(s)/icon(s) from "${frame.name}"…`,
+        message: `Exporting ${indivNodeInfos.length} shape(s)/image(s) from "${frame.name}"…`,
       });
     }
 
     const individualImages = await exportIndividualNodes(indivNodeInfos, exportScale);
     const textNodes = includeTextOverlay ? extractTextNodes(frame, frame) : [];
-
-    let bgColor = "FFFFFF";
-    if (frame.fills && Array.isArray(frame.fills) && frame.fills.length > 0) {
-      const solidBg = frame.fills.find((f) => f.type === "SOLID" && f.visible !== false);
-      if (solidBg) bgColor = rgbToHex(solidBg.color);
-    }
 
     figma.ui.postMessage({
       type: "slide",
