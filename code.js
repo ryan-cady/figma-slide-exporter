@@ -39,7 +39,21 @@ function extractTextNodes(node, rootFrame, results = []) {
 
     const fontSize = safeGet(node.fontSize, 16);
 
-    const fontName = node.fontName !== figma.mixed ? node.fontName : null;
+    // node.fontName reads as figma.mixed the moment ANY character in the run
+    // differs in style from the rest (e.g. one stray character bolded by
+    // accident) — even when the family is uniform throughout. Rather than
+    // losing the family entirely in that case (which left fontFamily "" and
+    // made the PPTX renderer fall back to Arial), sample the first
+    // character's font as a representative value.
+    let fontName = node.fontName;
+    if (fontName === figma.mixed) {
+      try {
+        fontName = node.characters.length > 0 ? node.getRangeFontName(0, 1) : null;
+      } catch (e) {
+        fontName = null;
+      }
+      if (fontName === figma.mixed) fontName = null;
+    }
     const fontStyle = safeGet(fontName ? fontName.style : "", "Regular");
     const italic = fontStyle.toLowerCase().includes("italic");
     const baseFamily = fontName ? fontName.family : "";
@@ -128,6 +142,17 @@ function nodeHasImageFill(node) {
   return Array.isArray(fills) && fills.some((f) => f.type === "IMAGE" && f.visible !== false);
 }
 
+/**
+ * Returns true if any immediate child of `node` is a mask layer (isMask === true).
+ * Figma clips its masked siblings only when the group is composited as a whole —
+ * a masked layer exported on its own (exportAsync on just the image node) ignores
+ * the mask shape entirely and renders its full, unclipped rectangle. So a group
+ * like this must be flattened and exported as one unit rather than recursed into.
+ */
+function hasMaskChild(node) {
+  return "children" in node && node.children.some((c) => c.isMask);
+}
+
 /** Node types treated as standalone shapes/lines, exported individually rather than baked into the background */
 const SHAPE_NODE_TYPES = new Set([
   "RECTANGLE",
@@ -184,7 +209,13 @@ function collectIndividualNodes(node, rootFrame, results = [], clippedFound = { 
     SHAPE_NODE_TYPES.has(node.type)
   );
 
-  if (isShapeCandidate) {
+  // A group that masks its own children (e.g. an image mask) must be exported
+  // as one flattened unit — exportAsync on the group itself applies the mask
+  // correctly, but exporting the masked child alone would not. Stop recursing
+  // here rather than descending into the mask shape and the image separately.
+  const isMaskingGroup = node !== rootFrame && !isShapeCandidate && hasMaskChild(node);
+
+  if (isShapeCandidate || isMaskingGroup) {
     if (isClippedByAncestor(node, rootFrame)) {
       clippedFound.any = true;
       return results;
