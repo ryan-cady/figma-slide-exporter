@@ -488,7 +488,16 @@
         <option value="Trebuchet MS">Trebuchet MS</option>
         <option value="Ubuntu">Ubuntu</option>
         <option value="Verdana">Verdana</option>
+        <option value="__other__">Other (enter Google Font)…</option>
       </select>
+      <input
+        id="fontOverrideCustom"
+        class="select-input"
+        style="display:none; margin-top:6px"
+        type="text"
+        placeholder="e.g. Space Grotesk"
+        oninput="state.fontOverrideFamily = this.value"
+      />
     </div>
 
   </div>
@@ -567,7 +576,15 @@ function toggleFontOverride() {
 }
 
 function setFontOverrideFamily(v) {
-  state.fontOverrideFamily = v;
+  const customInput = document.getElementById('fontOverrideCustom');
+  if (v === '__other__') {
+    customInput.style.display = 'block';
+    state.fontOverrideFamily = customInput.value;
+    customInput.focus();
+  } else {
+    customInput.style.display = 'none';
+    state.fontOverrideFamily = v;
+  }
 }
 
 /** When "Force safe font" is on, overwrite every extracted text node's font
@@ -627,6 +644,11 @@ function resetUI() {
 
 // ── Start Export ──────────────────────────────
 function startExport() {
+  if (state.fontOverride && !state.fontOverrideFamily.trim()) {
+    showError('Enter a font name for "Force safe font", or pick one from the list.');
+    return;
+  }
+
   resetUI();
   collectedSlides = [];
   document.getElementById('exportBtn').disabled = true;
