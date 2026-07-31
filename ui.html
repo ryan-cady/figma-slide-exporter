@@ -214,43 +214,6 @@
     border-color: var(--accent);
   }
 
-  /* ── Format Selector ─────────────────────────── */
-  .format-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .fmt-btn {
-    flex: 1;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--muted);
-    font-family: var(--sans);
-    font-size: 12px;
-    font-weight: 500;
-    padding: 8px 4px;
-    cursor: pointer;
-    transition: all 0.15s;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .fmt-btn .icon { font-size: 16px; }
-
-  .fmt-btn.active {
-    background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
-    border-color: var(--accent);
-    color: var(--accent2);
-  }
-
-  .fmt-btn:hover:not(.active) {
-    border-color: var(--muted);
-    color: var(--text);
-  }
-
   /* ── Export Button ──────────────────────────── */
   #exportBtn {
     width: 100%;
@@ -408,30 +371,14 @@
   <div class="logo">▤</div>
   <div class="header-text">
     <h1>Slides Exporter</h1>
-    <p>Figma frames → PPTX / Google Slides JSON</p>
+    <p>Figma frames → PowerPoint</p>
   </div>
 </div>
 
 <!-- Options -->
 <div id="optionsArea">
 
-  <div class="label">Export Format</div>
-  <div class="card">
-    <div class="format-row">
-      <button class="fmt-btn active" data-format="pptx" onclick="setFormat('pptx')">
-        <span class="icon">📊</span>
-        PowerPoint
-        <small>.pptx</small>
-      </button>
-      <button class="fmt-btn" data-format="gslides" onclick="setFormat('gslides')">
-        <span class="icon">📑</span>
-        Slides JSON
-        <small>for API</small>
-      </button>
-    </div>
-  </div>
-
-  <div class="label" style="margin-top:12px">Options</div>
+  <div class="label">Options</div>
   <div class="card">
 
     <div class="toggle-row" onclick="toggleOpt('textOverlay')">
@@ -540,7 +487,6 @@
 <script>
 // ── State ────────────────────────────────────
 const state = {
-  format: 'pptx',
   textOverlay: true,
   scale: 2,
   fontOverride: false,
@@ -550,13 +496,6 @@ const state = {
 let collectedSlides = [];
 
 // ── UI helpers ───────────────────────────────
-function setFormat(fmt) {
-  state.format = fmt;
-  document.querySelectorAll('.fmt-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.format === fmt);
-  });
-}
-
 function toggleOpt(key) {
   state[key] = !state[key];
   document.getElementById(`toggle-${key}`).classList.toggle('on', state[key]);
@@ -686,16 +625,12 @@ window.onmessage = async (event) => {
     }
 
     case 'slides-done': {
-      logLine(`All frames received. Building ${state.format.toUpperCase()}…`, 'success');
+      logLine('All frames received. Building PPTX…', 'success');
       setProgress(85, 'Assembling presentation…');
       try {
         const slides = collectedSlides.filter(Boolean);
         applyFontOverride(slides);
-        if (state.format === 'pptx') {
-          await buildPPTX(slides, msg.pageName);
-        } else {
-          buildSlidesJSON(slides, msg.pageName);
-        }
+        await buildPPTX(slides, msg.pageName);
       } catch (e) {
         showError(`Build failed: ${e.message}`);
         logLine(e.message, 'error');
@@ -825,188 +760,6 @@ async function buildPPTX(slides, pageName) {
   );
 }
 
-// ── Google Slides JSON Builder ────────────────
-/**
- * Produces a JSON payload compatible with the Google Slides API
- * batchUpdate endpoint. Import this into your own script to push
- * to a real Slides deck via OAuth.
- *
- * Docs: https://developers.google.com/slides/api/reference/rest/v1/presentations/batchUpdate
- */
-function buildSlidesJSON(slides, pageName) {
-  const requests = [];
-
-  // Each slide: createSlide + addImage + addTextBox per text node
-  slides.forEach((slide, idx) => {
-    const slideId = `slide_${idx}`;
-
-    // 1. Create slide
-    requests.push({
-      createSlide: {
-        objectId: slideId,
-        insertionIndex: idx,
-        slideLayoutReference: { predefinedLayout: 'BLANK' },
-      },
-    });
-
-    // 2. Page background colour
-    requests.push({
-      updatePageProperties: {
-        objectId: slideId,
-        pageProperties: {
-          pageBackgroundFill: {
-            solidFill: { color: { rgbColor: hexToRgbNorm(slide.bgColor) } },
-          },
-        },
-        fields: 'pageBackgroundFill',
-      },
-    });
-
-    // 3. Background image element (requires uploading image to a public URL first)
-    //    We include the placeholder here; swap imageUrl at runtime.
-    if (slide.imageBytes) {
-      const imgId = `img_${idx}`;
-      const b64   = uint8ToBase64(new Uint8Array(slide.imageBytes));
-      requests.push({
-        _comment: `Upload base64 PNG to Cloud Storage or Imgur, then replace imageUrl below`,
-        createImage: {
-          objectId: imgId,
-          url: `__REPLACE_WITH_UPLOADED_URL_FOR_SLIDE_${idx}__`,
-          elementProperties: {
-            pageObjectId: slideId,
-            size: {
-              width:  { magnitude: slide.width  * 9144, unit: 'EMU' },
-              height: { magnitude: slide.height * 9144, unit: 'EMU' },
-            },
-            transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' },
-          },
-        },
-      });
-    }
-
-    // 3a. Individual images (bitmaps / icons exported separately)
-    if (slide.individualImages && slide.individualImages.length > 0) {
-      slide.individualImages.forEach((img, ii) => {
-        const EMU = 9144;
-        const indivId = `indiv_${idx}_${ii}`;
-        requests.push({
-          _comment: `Upload base64 PNG, then replace imageUrl below`,
-          createImage: {
-            objectId: indivId,
-            url: `__REPLACE_WITH_UPLOADED_URL_FOR_SLIDE_${idx}_IMAGE_${ii}__`,
-            elementProperties: {
-              pageObjectId: slideId,
-              size: {
-                width:  { magnitude: img.w * EMU, unit: 'EMU' },
-                height: { magnitude: img.h * EMU, unit: 'EMU' },
-              },
-              transform: {
-                scaleX: 1, scaleY: 1,
-                translateX: img.x * EMU,
-                translateY: img.y * EMU,
-                unit: 'EMU',
-              },
-            },
-          },
-        });
-      });
-    }
-
-    // 4. Text boxes
-    if (slide.textNodes) {
-      slide.textNodes.forEach((t, ti) => {
-        if (!t.text || t.text.trim() === '') return;
-
-        const boxId = `txt_${idx}_${ti}`;
-        // Google Slides uses EMU. 1px ≈ 9144 EMU at 96dpi.
-        const EMU = 9144;
-
-        requests.push({
-          createShape: {
-            objectId: boxId,
-            shapeType: 'TEXT_BOX',
-            elementProperties: {
-              pageObjectId: slideId,
-              size: {
-                width:  { magnitude: t.w * EMU, unit: 'EMU' },
-                height: { magnitude: t.h * EMU, unit: 'EMU' },
-              },
-              transform: {
-                scaleX: 1, scaleY: 1,
-                translateX: t.x * EMU,
-                translateY: t.y * EMU,
-                unit: 'EMU',
-              },
-            },
-          },
-        });
-
-        // Vertical alignment within the box
-        requests.push({
-          updateShapeProperties: {
-            objectId: boxId,
-            shapeProperties: {
-              contentAlignment: t.valign === 'middle' ? 'MIDDLE'
-                               : t.valign === 'bottom' ? 'BOTTOM'
-                               : 'TOP',
-            },
-            fields: 'contentAlignment',
-          },
-        });
-
-        // Insert text
-        requests.push({
-          insertText: { objectId: boxId, text: t.text },
-        });
-
-        // Style text
-        requests.push({
-          updateTextStyle: {
-            objectId: boxId,
-            textRange: { type: 'ALL' },
-            style: {
-              fontSize:   { magnitude: t.fontSize, unit: 'PT' },
-              foregroundColor: {
-                opaqueColor: { rgbColor: hexToRgbNorm(t.color) },
-              },
-              bold:   t.bold,
-              italic: t.italic,
-              ...(t.fontFamily ? { weightedFontFamily: { fontFamily: t.fontFamily } } : {}),
-            },
-            fields: t.fontFamily
-              ? 'fontSize,foregroundColor,bold,italic,weightedFontFamily'
-              : 'fontSize,foregroundColor,bold,italic',
-          },
-        });
-
-        // Paragraph alignment
-        requests.push({
-          updateParagraphStyle: {
-            objectId: boxId,
-            textRange: { type: 'ALL' },
-            style: {
-              alignment: t.align === 'center' ? 'CENTER'
-                       : t.align === 'right'  ? 'END'
-                       : 'START',
-            },
-            fields: 'alignment',
-          },
-        });
-      });
-    }
-  });
-
-  const payload = JSON.stringify({ requests }, null, 2);
-  downloadText(payload, `${pageName.replace(/[^a-z0-9\-_ ]/gi, '_')}_slides_api.json`);
-
-  setProgress(100, 'Done');
-  logLine(`JSON saved (${requests.length} API requests)`, 'success');
-  showSuccess(
-    `${slides.length} slide${slides.length !== 1 ? 's' : ''} → JSON`,
-    `Feed this to the Google Slides batchUpdate API with OAuth`
-  );
-}
-
 // ── Utilities ─────────────────────────────────
 
 /** Uint8Array → base64 string without breaking on large arrays */
@@ -1017,27 +770,6 @@ function uint8ToBase64(bytes) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
-}
-
-/** #RRGGBB → { red, green, blue } in 0–1 range */
-function hexToRgbNorm(hex) {
-  const r = parseInt(hex.slice(0, 2), 16) / 255;
-  const g = parseInt(hex.slice(2, 4), 16) / 255;
-  const b = parseInt(hex.slice(4, 6), 16) / 255;
-  return { red: r, green: g, blue: b };
-}
-
-/** Trigger a text file download */
-function downloadText(content, filename) {
-  const blob = new Blob([content], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 </script>
 

@@ -1,8 +1,7 @@
 # Figma Slides Exporter
 
-A Figma plugin that exports your presentation frames to:
-- **PowerPoint (.pptx)** — downloaded directly to your machine, no auth needed
-- **Google Slides JSON** — a batchUpdate payload ready for the Slides API
+A Figma plugin that exports your presentation frames to **PowerPoint (.pptx)** —
+downloaded directly to your machine, no auth needed.
 
 ---
 
@@ -17,8 +16,7 @@ Figma frames
     │   └─ extracts text nodes with position/style
     │
     └─► ui.html (iframe)
-            ├─ pptxgenjs → builds .pptx in-browser → download
-            └─ custom builder → Google Slides batchUpdate JSON → download
+            └─ pptxgenjs → builds .pptx in-browser → download
 ```
 
 Each **top-level frame** on the current Figma page becomes one slide.
@@ -41,9 +39,7 @@ Each **top-level frame** on the current Figma page becomes one slide.
 
 ---
 
-## Export modes
-
-### PowerPoint (.pptx)
+## Export
 
 - Each frame → one slide
 - Frame rasterised as PNG background (preserves all visual fidelity)
@@ -54,42 +50,28 @@ Each **top-level frame** on the current Figma page becomes one slide.
 Text is selectable and searchable but may not perfectly match Figma fonts
 unless those fonts are installed on the target machine.
 
-### Google Slides JSON
-
-Exports a `_slides_api.json` file containing a Google Slides
-[`batchUpdate`](https://developers.google.com/slides/api/reference/rest/v1/presentations/batchUpdate)
-request payload.
-
-To use it, you need to:
-
-1. Upload each slide's background PNG to a publicly accessible URL
-   (e.g. Google Cloud Storage, Cloudflare R2, or even a temporary Imgur link)
-2. Replace the `__REPLACE_WITH_UPLOADED_URL_FOR_SLIDE_N__` placeholders
-3. Run the payload against the Slides API with OAuth:
-
-```javascript
-const { google } = require('googleapis');
-const slides = google.slides({ version: 'v1', auth: yourOAuth2Client });
-
-const payload = require('./my_presentation_slides_api.json');
-
-await slides.presentations.batchUpdate({
-  presentationId: 'YOUR_PRESENTATION_ID',
-  requestBody: payload,
-});
-```
-
 ---
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| Export format | PowerPoint | Choose between `.pptx` or Google Slides JSON |
 | Selectable text overlay | On | Lay editable text boxes on top of the rasterised background |
 | Raster scale | 2× | Export resolution — 1× smallest, 2× sharp on most screens, 3× for print |
 | Force safe font | Off | Replace all text with a single widely-available font instead of the frame's original Figma fonts |
 | Safe font family | Arial | Dropdown of common web-safe / Google fonts (Calibri, Georgia, Helvetica Neue, Lato, Montserrat, Noto Sans, Nunito, Open Sans, Oswald, Playfair Display, Poppins, PT Sans, Raleway, Roboto, Source Sans Pro, Times New Roman, Trebuchet MS, Ubuntu, Verdana), or "Other" to type in any custom/Google Font name. Only shown when *Force safe font* is on |
+
+---
+
+## Using with Google Slides
+
+There's no direct export to Google Slides, but the `.pptx` converts cleanly:
+
+1. Turn on **Force safe font** and pick a Google Font (or type one in via "Other")
+   so the text renders correctly once it's out of Figma's font environment.
+2. Export the `.pptx`.
+3. Upload it to Google Drive, then open it — Drive opens `.pptx` files directly
+   in Google Slides, converting it automatically.
 
 ---
 
@@ -102,15 +84,6 @@ complex fills) that have no 1:1 PPTX equivalent. Rasterising each frame as
 a PNG preserves visual accuracy. The text overlay then adds editability.
 This is the same strategy used by the commercial plugins you referenced.
 
-### Why no direct Google Slides push from the plugin?
-
-Figma plugins can't initiate OAuth flows directly — they run in a sandboxed
-iframe with no persistent storage and no ability to open popups. The JSON
-export approach works around this: generate the payload in the plugin, then
-run it through an external script or backend that handles OAuth.
-
-See Part 2 of this project (sync script) for a Node.js implementation.
-
 ---
 
 ## Project structure
@@ -119,7 +92,7 @@ See Part 2 of this project (sync script) for a Node.js implementation.
 figma-slides-exporter/
 ├── manifest.json   — Figma plugin manifest
 ├── code.js         — Plugin sandbox (Figma API access, frame traversal)
-├── ui.html         — Plugin UI (pptxgenjs, PPTX/JSON build logic)
+├── ui.html         — Plugin UI (pptxgenjs, PPTX build logic)
 └── README.md       — This file
 ```
 
@@ -135,5 +108,3 @@ figma-slides-exporter/
 - **Vector shapes:** Non-text, non-image elements (SVG paths, etc.) are
   captured in the raster background but not as editable PPTX shapes.
 - **Animations:** Figma's Smart Animate has no PPTX equivalent; ignored.
-- **Google Slides JSON:** Background images require a manual upload step
-  before the payload is usable. Part 2 of this project automates this.
