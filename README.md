@@ -85,8 +85,11 @@ await slides.presentations.batchUpdate({
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| Text overlay | On | Adds editable text boxes on top of rasterised background |
-| Raster scale | 2× | Export resolution. 2× is sharp on most screens; 3× for print |
+| Export format | PowerPoint | Choose between `.pptx` or Google Slides JSON |
+| Selectable text overlay | On | Lay editable text boxes on top of the rasterised background |
+| Raster scale | 2× | Export resolution — 1× smallest, 2× sharp on most screens, 3× for print |
+| Force safe font | Off | Replace all text with a single widely-available font instead of the frame's original Figma fonts |
+| Safe font family | Arial | Dropdown of common web-safe / Google fonts (Calibri, Georgia, Helvetica Neue, Lato, Montserrat, Noto Sans, Nunito, Open Sans, Oswald, Playfair Display, Poppins, PT Sans, Raleway, Roboto, Source Sans Pro, Times New Roman, Trebuchet MS, Ubuntu, Verdana), or "Other" to type in any custom/Google Font name. Only shown when *Force safe font* is on |
 
 ---
 
@@ -124,9 +127,11 @@ figma-slides-exporter/
 
 ## Known limitations
 
-- **Fonts:** Figma fonts are not embedded in .pptx. The text overlay uses
-  `Arial` as a safe fallback. You can map font names in `ui.html`
-  near the `s.addText(...)` call.
+- **Fonts:** Figma fonts are not embedded in .pptx — the text overlay
+  references the original Figma font family by name, so it only renders
+  correctly if that font is installed on the machine opening the file.
+  Use the **Force safe font** option to substitute a widely-available
+  font (or any custom/Google Font name) instead.
 - **Vector shapes:** Non-text, non-image elements (SVG paths, etc.) are
   captured in the raster background but not as editable PPTX shapes.
 - **Animations:** Figma's Smart Animate has no PPTX equivalent; ignored.
