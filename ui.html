@@ -408,7 +408,7 @@
     <div class="toggle-row" onclick="toggleFontOverride()">
       <div class="toggle-label">
         <span>Force safe font</span>
-        <small>Replace all text with a font that's widely available</small>
+        <small>Replace fonts with one available in Google Slides</small>
       </div>
       <div class="toggle" id="toggle-fontOverride"></div>
     </div>
@@ -445,6 +445,16 @@
         placeholder="e.g. Space Grotesk"
         oninput="state.fontOverrideFamily = this.value"
       />
+    </div>
+
+    <div style="height:1px; background: var(--border)"></div>
+
+    <div class="toggle-row" onclick="toggleOpt('preserveVectors')">
+      <div class="toggle-label">
+        <span>Preserve simple vectors</span>
+        <small>Export rectangles, ellipses, lines, polygons &amp; stars as editable shapes instead of flattened images</small>
+      </div>
+      <div class="toggle" id="toggle-preserveVectors"></div>
     </div>
 
   </div>
@@ -491,6 +501,7 @@ const state = {
   scale: 2,
   fontOverride: false,
   fontOverrideFamily: 'Arial',
+  preserveVectors: false,
 };
 
 let collectedSlides = [];
@@ -600,6 +611,7 @@ function startExport() {
       type: 'start-export',
       includeTextOverlay: state.textOverlay,
       exportScale: state.scale,
+      preserveVectors: state.preserveVectors,
     }
   }, '*');
 }
@@ -706,6 +718,36 @@ async function buildPPTX(slides, pageName) {
           w: pxToInch(img.w),
           h: pxToInch(img.h),
         });
+      }
+    }
+
+    // ── Vector shapes (rect/ellipse/line/polygon/star as native, editable PPTX autoshapes)
+    if (slide.vectorShapes && slide.vectorShapes.length > 0) {
+      for (const v of slide.vectorShapes) {
+        const shapeType = pptx.ShapeType[v.shapeType];
+        if (!shapeType) continue;
+
+        const opts = {
+          x: pxToInch(v.x),
+          y: pxToInch(v.y),
+          w: pxToInch(v.w),
+          h: pxToInch(v.h),
+          fill: v.fillColor
+            ? { color: v.fillColor, transparency: Math.round((1 - v.fillOpacity * v.opacity) * 100) }
+            : { type: 'none' },
+          line: v.strokeColor && v.strokeWeight > 0
+            ? { color: v.strokeColor, width: pxToPt(v.strokeWeight) }
+            : { type: 'none' },
+        };
+        if (v.rectRadius !== undefined) {
+          opts.rectRadius = pxToInch(v.rectRadius);
+        }
+
+        try {
+          s.addShape(shapeType, opts);
+        } catch (e) {
+          logLine(`  · shape FAILED: ${e.message}`, 'error');
+        }
       }
     }
 

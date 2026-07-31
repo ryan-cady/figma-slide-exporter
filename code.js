@@ -164,6 +164,97 @@ const SHAPE_NODE_TYPES = new Set([
   "BOOLEAN_OPERATION",
 ]);
 
+/** Regular-polygon side count → matching PPTX autoshape name */
+const POLYGON_SHAPE_BY_SIDES = { 3: "triangle", 4: "diamond", 5: "pentagon", 6: "hexagon", 7: "heptagon", 8: "octagon" };
+
+/** Star point counts pptxgenjs ships a dedicated autoshape for */
+const SUPPORTED_STAR_POINTS = new Set([4, 5, 6, 7, 8, 10, 12, 16, 24, 32]);
+
+/**
+ * Try to describe a RECTANGLE/ELLIPSE/LINE/POLYGON/STAR node as a native PPTX
+ * autoshape (fill + stroke color, geometry) instead of a flattened raster image.
+ * Returns null when the shape can't be represented cleanly as one — a rotated
+ * shape, a gradient/image fill or stroke, mixed corner radii, or a polygon/star
+ * point count with no matching PPTX autoshape — and the caller falls back to
+ * rasterising it as an image instead.
+ */
+function tryExtractVectorShape(node) {
+  // A native PPTX shape's x/y/w/h describe its un-rotated box; the only
+  // geometry we read below (absoluteBoundingBox) is the POST-rotation
+  // axis-aligned box, which only matches the un-rotated box when there's no
+  // rotation. Rather than risk placing a rotated shape at the wrong size,
+  // skip it and let it fall back to the raster pass.
+  if (Math.abs(node.rotation || 0) > 0.01) return null;
+
+  let shapeType;
+  let rectRadius;
+
+  if (node.type === "RECTANGLE") {
+    const radius = node.cornerRadius;
+    if (radius === figma.mixed) return null;
+    if (radius > 0) {
+      shapeType = "roundRect";
+      rectRadius = radius;
+    } else {
+      shapeType = "rect";
+    }
+  } else if (node.type === "ELLIPSE") {
+    shapeType = "ellipse";
+  } else if (node.type === "LINE") {
+    shapeType = "line";
+  } else if (node.type === "POLYGON") {
+    shapeType = POLYGON_SHAPE_BY_SIDES[node.pointCount];
+    if (!shapeType) return null;
+  } else if (node.type === "STAR") {
+    if (!SUPPORTED_STAR_POINTS.has(node.pointCount)) return null;
+    shapeType = `star${node.pointCount}`;
+  } else {
+    return null;
+  }
+
+  let fillColor = null;
+  let fillOpacity = 1;
+  const fills = safeGet(node.fills, []);
+  if (Array.isArray(fills)) {
+    const visibleFills = fills.filter((f) => f.visible !== false);
+    const solidFills = visibleFills.filter((f) => f.type === "SOLID");
+    const topFill = solidFills[solidFills.length - 1];
+    if (topFill) {
+      fillColor = rgbToHex(topFill.color);
+      fillOpacity = topFill.opacity !== undefined ? topFill.opacity : 1;
+    } else if (visibleFills.length > 0) {
+      return null; // gradient/image fill — no clean autoshape equivalent
+    }
+  }
+
+  let strokeColor = null;
+  let strokeWeight = 0;
+  const strokes = safeGet(node.strokes, []);
+  if (Array.isArray(strokes)) {
+    const visibleStrokes = strokes.filter((s) => s.visible !== false);
+    const solidStrokes = visibleStrokes.filter((s) => s.type === "SOLID");
+    const topStroke = solidStrokes[solidStrokes.length - 1];
+    if (topStroke) {
+      strokeColor = rgbToHex(topStroke.color);
+      strokeWeight = safeGet(node.strokeWeight, 0) || 0;
+    } else if (visibleStrokes.length > 0) {
+      return null; // gradient stroke — no clean autoshape equivalent
+    }
+  }
+
+  if (node.type === "LINE" && !strokeColor) return null; // invisible line, nothing to draw
+
+  return {
+    shapeType,
+    rectRadius,
+    fillColor,
+    fillOpacity,
+    strokeColor,
+    strokeWeight,
+    opacity: node.opacity !== undefined ? node.opacity : 1,
+  };
+}
+
 /**
  * exportAsync on an isolated node renders that node's own full geometry and
  * ignores any cropping contributed by an ancestor frame's "Clip content" —
@@ -200,8 +291,12 @@ function isClippedByAncestor(node, rootFrame) {
  * Stops recursing once a target node is found. Shapes that are visually clipped
  * by an ancestor frame are left out (flagged via `clippedFound`) so they fall
  * back to the background raster, which renders the clip correctly.
+ *
+ * When `preserveVectors` is on, eligible shape nodes are described as native
+ * PPTX autoshapes into `vectorResults` instead of being queued for image
+ * export — see `tryExtractVectorShape`.
  */
-function collectIndividualNodes(node, rootFrame, results = [], clippedFound = { any: false }) {
+function collectIndividualNodes(node, rootFrame, results = [], vectorResults = [], clippedFound = { any: false }, preserveVectors = false) {
   if (node.visible === false) return results;
 
   const isShapeCandidate = node !== rootFrame && (
@@ -220,6 +315,26 @@ function collectIndividualNodes(node, rootFrame, results = [], clippedFound = { 
       clippedFound.any = true;
       return results;
     }
+
+    if (preserveVectors) {
+      const vectorShape = tryExtractVectorShape(node);
+      if (vectorShape) {
+        const abs = node.absoluteBoundingBox;
+        const rootAbs = rootFrame.absoluteBoundingBox;
+        if (abs && rootAbs) {
+          vectorResults.push({
+            node,
+            ...vectorShape,
+            x: abs.x - rootAbs.x,
+            y: abs.y - rootAbs.y,
+            w: abs.width,
+            h: abs.height,
+          });
+        }
+        return results;
+      }
+    }
+
     // absoluteBoundingBox is geometry only — a LINE node's is 0 along its thin
     // axis, since visible thickness comes entirely from the stroke. exportAsync
     // rasterizes the actual visual footprint (stroke, effects, etc.), which is
@@ -241,7 +356,7 @@ function collectIndividualNodes(node, rootFrame, results = [], clippedFound = { 
 
   if ("children" in node) {
     for (const child of node.children) {
-      collectIndividualNodes(child, rootFrame, results, clippedFound);
+      collectIndividualNodes(child, rootFrame, results, vectorResults, clippedFound, preserveVectors);
     }
   }
 
@@ -299,7 +414,7 @@ async function exportFrameImage(frame, scale = 2, extraHideNodes = []) {
 
 // ── Main export flow ──────────────────────────
 
-async function runExport({ includeTextOverlay, exportScale }) {
+async function runExport({ includeTextOverlay, exportScale, preserveVectors }) {
   const page = figma.currentPage;
   const frames = page.children.filter((n) => n.type === "FRAME");
 
@@ -330,8 +445,10 @@ async function runExport({ includeTextOverlay, exportScale }) {
     });
 
     const clippedFound = { any: false };
-    const indivNodeInfos = collectIndividualNodes(frame, frame, [], clippedFound);
+    const vectorShapeInfos = [];
+    const indivNodeInfos = collectIndividualNodes(frame, frame, [], vectorShapeInfos, clippedFound, preserveVectors);
     const indivNodeRefs = indivNodeInfos.map((info) => info.node);
+    const vectorNodeRefs = vectorShapeInfos.map((info) => info.node);
 
     // Determine the artboard's own background: if the topmost visible fill is a
     // flat SOLID paint, use that color directly as the PPTX slide background and
@@ -354,7 +471,7 @@ async function runExport({ includeTextOverlay, exportScale }) {
 
     const imageBytes = isSolidBg
       ? null
-      : await exportFrameImage(frame, exportScale, indivNodeRefs);
+      : await exportFrameImage(frame, exportScale, [...indivNodeRefs, ...vectorNodeRefs]);
 
     if (indivNodeInfos.length > 0) {
       figma.ui.postMessage({
@@ -368,6 +485,8 @@ async function runExport({ includeTextOverlay, exportScale }) {
 
     const individualImages = await exportIndividualNodes(indivNodeInfos, exportScale);
     const textNodes = includeTextOverlay ? extractTextNodes(frame, frame) : [];
+    // Drop the live node reference — postMessage can only send plain data.
+    const vectorShapes = vectorShapeInfos.map(({ node, ...rest }) => rest);
 
     figma.ui.postMessage({
       type: "slide",
@@ -380,6 +499,7 @@ async function runExport({ includeTextOverlay, exportScale }) {
         imageBytes,
         textNodes,
         individualImages,
+        vectorShapes,
       },
     });
   }
@@ -399,6 +519,7 @@ figma.ui.onmessage = (msg) => {
       runExport({
         includeTextOverlay: msg.includeTextOverlay !== undefined ? msg.includeTextOverlay : true,
         exportScale: msg.exportScale !== undefined ? msg.exportScale : 2,
+        preserveVectors: msg.preserveVectors !== undefined ? msg.preserveVectors : false,
       });
       break;
 

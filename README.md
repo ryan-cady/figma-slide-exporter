@@ -60,6 +60,7 @@ unless those fonts are installed on the target machine.
 | Raster scale | 2× | Export resolution — 1× smallest, 2× sharp on most screens, 3× for print |
 | Force safe font | Off | Replace all text with a single widely-available font instead of the frame's original Figma fonts |
 | Safe font family | Arial | Dropdown of common web-safe / Google fonts (Calibri, Georgia, Helvetica Neue, Lato, Montserrat, Noto Sans, Nunito, Open Sans, Oswald, Playfair Display, Poppins, PT Sans, Raleway, Roboto, Source Sans Pro, Times New Roman, Trebuchet MS, Ubuntu, Verdana), or "Other" to type in any custom/Google Font name. Only shown when *Force safe font* is on |
+| Preserve simple vectors | Off | Export rectangles, ellipses, lines, and regular polygons/stars as native, editable PPTX shapes instead of flattened images. See [limitations](#known-limitations) for which shapes qualify |
 
 ---
 
@@ -105,6 +106,15 @@ figma-slides-exporter/
   correctly if that font is installed on the machine opening the file.
   Use the **Force safe font** option to substitute a widely-available
   font (or any custom/Google Font name) instead.
-- **Vector shapes:** Non-text, non-image elements (SVG paths, etc.) are
-  captured in the raster background but not as editable PPTX shapes.
+- **Vector shapes:** By default, non-text, non-image elements are captured as
+  flattened images rather than editable PPTX shapes. Turning on **Preserve
+  simple vectors** upgrades a subset of them to real, editable PowerPoint
+  autoshapes — but only when all of the following hold, otherwise that shape
+  falls back to a flattened image:
+  - It's a rectangle, ellipse, line, regular polygon (3–8 sides), or star
+    (4, 5, 6, 7, 8, 10, 12, 16, 24, or 32 points) — freeform vector paths
+    (icons, custom illustrations, boolean groups) never qualify
+  - It isn't rotated
+  - Its fill and stroke (if any) are flat solid colors, not gradients or images
+  - A rectangle's corner radius is uniform, not mixed per-corner
 - **Animations:** Figma's Smart Animate has no PPTX equivalent; ignored.
